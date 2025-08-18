@@ -814,6 +814,7 @@ impl Slot for VllmConnectorSlot {
     }
 
     fn trigger_onboarding(&mut self, num_external_tokens: usize) -> Result<(), SlotError> {
+        tracing::debug!("triggering onboarding!");
         if !matches!(self.state(), SlotState::OnboardStaged(_)) {
             return Err(SlotError::InvalidOperation(format!(
                 "slot must be in the OnboardStaged state to trigger onboarding; got {:?}",
@@ -833,6 +834,8 @@ impl Slot for VllmConnectorSlot {
         // match the host / disk blocks to the newly assigned mutable device blocks
         if let Some(host_blocks) = self.staging_from_host.take() {
             let num_host_blocks = host_blocks.len();
+
+            tracing::debug!("onboarding {} host blocks!", num_host_blocks);
 
             // get device block ids
             let dst_block_ids = self
