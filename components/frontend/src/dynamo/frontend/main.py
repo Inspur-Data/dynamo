@@ -125,7 +125,7 @@ def parse_args():
     parser.add_argument(
         "--namespace",
         type=str,
-        default=None,
+        default=os.environ.get(DYNAMO_NAMESPACE_ENV_VAR),
         help="Dynamo namespace for model discovery scoping. If specified, models will only be discovered from this namespace. If not specified, discovers models from all namespaces (global discovery).",
     )
     parser.set_defaults(use_kv_events=True)
@@ -161,9 +161,6 @@ def parse_args():
 
     if flags.static_endpoint and (not flags.model_name or not flags.model_path):
         parser.error("--static-endpoint requires both --model-name and --model-path")
-
-    if not flags.namespace:
-        flags.namespace = os.environ.get(DYNAMO_NAMESPACE_ENV_VAR)
 
     return flags
 
