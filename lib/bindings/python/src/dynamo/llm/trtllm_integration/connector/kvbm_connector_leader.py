@@ -51,20 +51,20 @@ class DynamoKVBMConnectorLeader(KvCacheConnectorScheduler):
 
         for req in scheduler_output.new_requests:
             output.add_new_request(
-                req.request_id,
+                str(req.request_id),
                 req.new_tokens,
                 req.new_block_ids,
-                req.computed_position,
+                req.computed_position + 1,
             )
 
         resumed_from_preemption = False
         for req in scheduler_output.cached_requests:
             output.add_cached_request(
-                req.request_id,
+                str(req.request_id),
                 resumed_from_preemption,
                 req.new_tokens,
                 req.new_block_ids,
-                req.computed_position,
+                req.computed_position + 1,
             )
 
         return self._connector.build_connector_metadata(output)
@@ -84,7 +84,7 @@ class DynamoKVBMConnectorLeader(KvCacheConnectorScheduler):
         """
         self._create_slot(request)
         return self._connector.get_num_new_matched_tokens(
-            request.request_id,
+            str(request.request_id),
             len(request.get_tokens(0)),
             num_computed_tokens,
         )
@@ -96,7 +96,9 @@ class DynamoKVBMConnectorLeader(KvCacheConnectorScheduler):
             request: The request that was allocated resources.
             block_ids: The KV cacheblock IDs that were allocated.
         """
-        self._connector.update_state_after_alloc(request.request_id, block_ids)
+        self._connector.update_state_after_alloc(
+            str(request.request_id), block_ids, request.context_current_position
+        )
 
     def request_finished(self, request: LlmRequest, cache_block_ids: list[int]) -> bool:
         """
@@ -108,14 +110,14 @@ class DynamoKVBMConnectorLeader(KvCacheConnectorScheduler):
             If true, this indicates that the kv cache manager should wait to deallocate the blocks until the saving has completed (determined by `get_finished` on the workers).
         """
         is_async_saving = self._connector.request_finished(
-            request.request_id, cache_block_ids
+            str(request.request_id), cache_block_ids
         )
         return is_async_saving
 
     def _create_slot(self, request: LlmRequest) -> None:
         """Create a slot for the request"""
 
-        if self._connector.has_slot(request.request_id):
+        if self._connector.has_slot(str(request.request_id)):
             return None
 
         if bool(request.multimodal_positions):
@@ -125,7 +127,7 @@ class DynamoKVBMConnectorLeader(KvCacheConnectorScheduler):
 
         # extract the critial aspects of the request that effect how the tokens are hashed
         request = KvbmRequest(
-            request_id=request.request_id, lora_name=None, salt_hash=None
+            request_id=str(request.request_id), lora_name=None, salt_hash=None
         )
 
         self._connector.create_slot(request, all_token_ids)

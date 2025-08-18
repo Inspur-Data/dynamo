@@ -79,7 +79,7 @@ class DynamoKVBMConnectorWorker(KvCacheConnectorWorker):
         Begin loading the KV cache in preparation for the next forward pass.
         Specific blocks to transfer are indicated by the scheduler's metadata.
         """
-        self._connector.start_load_kv(self._metadata)
+        self._connector.start_load_kv()
 
     def wait_for_save(self, stream: torch.cuda.Stream):
         """
