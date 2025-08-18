@@ -170,6 +170,10 @@ impl Leader for KvConnectorLeader {
 
         // early exit if we cannot match full block
         if (slot.sequence().total_tokens() - num_computed_tokens) < self.block_size {
+            let total_tokens = slot.sequence().total_tokens();
+            tracing::debug!(
+                "total_tokens in sequence: {total_tokens}; num_computed_tokens: {num_computed_tokens}; can not match full block."
+            );
             return Ok((0, false));
         }
 
