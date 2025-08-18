@@ -574,7 +574,7 @@ impl Slot for VllmConnectorSlot {
         let computed_position = num_computed_tokens - 1;
         // TRTLLM's KV Connector Manager will have (computed_position - external matches)
         // in onborading case
-        if computed_position <= self.current_position {
+        if computed_position < self.current_position {
             tracing::debug!(
                 "new_computed_position={} <= current_position={}, so we are onboarding during prefilling phase",
                 computed_position, self.current_position
