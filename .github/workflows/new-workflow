@@ -1,0 +1,34 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        registry: registry.cn-hangzhou.aliyuncs.com
+        username: ${{ secrets.USERNAME_ALI }}
+        password: ${{ secrets.PASSWORD_ALI }}
+
+    - name: Delete huge unnecessary tools folder
+      run: rm -rf /opt/hostedtoolcache
+    
+    - name: Build the Docker image
+      run: |
+        chmod +x ./container/build.sh
+      
+        ./container/build.sh --framework vllm
+        docker tag dynamo:latest-vllm  registry.cn-hangzhou.aliyuncs.com/testwydimage/dynamo:latest-vllm
+    
+        docker push  registry.cn-hangzhou.aliyuncs.com/testwydimage/dynamo:latest-vllm
