@@ -285,7 +285,7 @@ def setup_prefill_node(
     Setup the prefill node.
     """
     if not use_sglang_commands:
-        if is_global_rank_zero:  # Only global rank 0 sets up infrastructure
+        if is_global_rank_zero:  # Only first node globally
             setup_head_prefill_node(prefill_host_ip)
         else:
             logging.info(f"Setting up child prefill node: {rank}")
@@ -368,7 +368,7 @@ def main(input_args: list[str] | None = None):
             args.total_nodes * args.gpus_per_node,
             args.use_sglang_commands,
             args.gpu_type,
-            args.is_global_rank_zero,
+            getattr(args, 'is_global_rank_zero', False),
         )
     else:
         setup_decode_node(

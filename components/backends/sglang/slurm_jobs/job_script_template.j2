@@ -91,7 +91,6 @@ echo "Decode: ${DECODE_WORKERS} workers, ${DECODE_NODES_PER_WORKER} nodes each"
 # Launch prefill workers
 prefill_global_rank=0
 for worker_id in $(seq 0 $((PREFILL_WORKERS - 1))); do
-    # Calculate node range for this worker
     start_node=$((worker_id * PREFILL_NODES_PER_WORKER))
     end_node=$((start_node + PREFILL_NODES_PER_WORKER - 1))
     
@@ -100,6 +99,7 @@ for worker_id in $(seq 0 $((PREFILL_WORKERS - 1))); do
     # Launch tasks for this worker's nodes
     for i in $(seq $start_node $end_node); do
         node=${nodes[$i]}
+        local_rank=$((i - start_node))  # 0,1,2... within each worker
         
         # Only the very first node globally should set up infrastructure
         global_rank_zero_flag=""
@@ -107,7 +107,8 @@ for worker_id in $(seq 0 $((PREFILL_WORKERS - 1))); do
             global_rank_zero_flag="--is_global_rank_zero"
         fi
         
-        local_rank=$((i - start_node))
+        echo "  Node ${i} (${node}): local_rank=${local_rank}, global_rank=${prefill_global_rank}"
+        
         cmd="srun $ENROOT_ARGS --nodes=1 --ntasks=1 --nodelist=$node --output=${LOG_DIR}/${node}_prefill_w${worker_id}.out --error=${LOG_DIR}/${node}_prefill_w${worker_id}.err python /scripts/worker_setup.py --prefill_host_ip ${PREFILL_HOST_IP} --decode_host_ip ${DECODE_HOST_IP} --rank ${local_rank} --total_nodes ${PREFILL_NODES_PER_WORKER} --worker_type prefill ${global_rank_zero_flag} --gpu_utilization_log /logs/${node}_prefill_w${worker_id}_gpu_utilization.log ${WORKER_ARGS}"
         echo "$cmd"
         $cmd &
@@ -116,22 +117,21 @@ for worker_id in $(seq 0 $((PREFILL_WORKERS - 1))); do
     done
 done
 
-# Launch decode workers
+# Launch decode workers  
 decode_global_rank=0
 for worker_id in $(seq 0 $((DECODE_WORKERS - 1))); do
-    # Calculate node range for this worker (offset by prefill nodes)
     start_node=$((PREFILL_NODES + worker_id * DECODE_NODES_PER_WORKER))
     end_node=$((start_node + DECODE_NODES_PER_WORKER - 1))
     
     echo "Launching decode worker ${worker_id} on nodes ${start_node}-${end_node}"
     
-    # Launch tasks for this worker's nodes
     for i in $(seq $start_node $end_node); do
         node=${nodes[$i]}
+        local_rank=$((i - start_node))  # 0,1,2... within each worker
         
-        echo "  Node ${i} (${node}): global_rank=${decode_global_rank}"
+        echo "  Node ${i} (${node}): local_rank=${local_rank}, global_rank=${decode_global_rank}"
         
-        cmd="srun $ENROOT_ARGS --nodes=1 --ntasks=1 --nodelist=$node --output=${LOG_DIR}/${node}_decode_w${worker_id}.out --error=${LOG_DIR}/${node}_decode_w${worker_id}.err python /scripts/worker_setup.py --decode_host_ip ${DECODE_HOST_IP} --prefill_host_ip ${PREFILL_HOST_IP} --rank ${decode_global_rank} --total_nodes ${DECODE_NODES_PER_WORKER} --worker_type decode --gpu_utilization_log /logs/${node}_decode_w${worker_id}_gpu_utilization.log ${WORKER_ARGS}"
+        cmd="srun $ENROOT_ARGS --nodes=1 --ntasks=1 --nodelist=$node --output=${LOG_DIR}/${node}_decode_w${worker_id}.out --error=${LOG_DIR}/${node}_decode_w${worker_id}.err python /scripts/worker_setup.py --decode_host_ip ${DECODE_HOST_IP} --prefill_host_ip ${PREFILL_HOST_IP} --rank ${local_rank} --total_nodes ${DECODE_NODES_PER_WORKER} --worker_type decode --gpu_utilization_log /logs/${node}_decode_w${worker_id}_gpu_utilization.log ${WORKER_ARGS}"
         echo "$cmd"
         $cmd &
         
