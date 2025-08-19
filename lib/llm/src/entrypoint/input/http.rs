@@ -4,11 +4,13 @@
 use std::sync::Arc;
 
 use crate::{
-    discovery::{ModelManager, ModelWatcher, MODEL_ROOT_PATH},
+    discovery::{ModelManager, ModelUpdate, ModelWatcher, MODEL_ROOT_PATH},
+    endpoint_type::EndpointType,
     engines::StreamingEngineAdapter,
     entrypoint::{self, input::common, EngineConfig},
-    http::service::service_v2,
+    http::service::service_v2::{self, HttpService},
     kv_router::KvRouterConfig,
+    model_type::ModelType,
     types::openai::{
         chat_completions::{NvCreateChatCompletionRequest, NvCreateChatCompletionStreamResponse},
         completions::{NvCreateCompletionRequest, NvCreateCompletionResponse},
@@ -20,20 +22,17 @@ use dynamo_runtime::{DistributedRuntime, Runtime};
 
 /// Build and run an HTTP service
 pub async fn run(runtime: Runtime, engine_config: EngineConfig) -> anyhow::Result<()> {
-    let distributed_runtime = DistributedRuntime::from_settings(runtime.clone()).await?;
-    let etcd_client = distributed_runtime.etcd_client().clone();
-
-    let http_service = service_v2::HttpService::builder()
+    let mut http_service_builder = service_v2::HttpService::builder()
         .port(engine_config.local_model().http_port())
-        .enable_chat_endpoints(true)
-        .enable_cmpl_endpoints(true)
-        .enable_embeddings_endpoints(true)
-        .with_request_template(engine_config.local_model().request_template())
-        .with_etcd_client(etcd_client.clone())
-        .build()?;
+        .with_request_template(engine_config.local_model().request_template());
 
-    match engine_config {
+    let http_service = match engine_config {
         EngineConfig::Dynamic(_) => {
+            let distributed_runtime = DistributedRuntime::from_settings(runtime.clone()).await?;
+            let etcd_client = distributed_runtime.etcd_client();
+            // This allows the /health endpoint to query etcd for active instances
+            http_service_builder = http_service_builder.with_etcd_client(etcd_client.clone());
+            let http_service = http_service_builder.build()?;
             match etcd_client {
                 Some(ref etcd_client) => {
                     let router_config = engine_config.local_model().router_config();
@@ -45,6 +44,7 @@ pub async fn run(runtime: Runtime, engine_config: EngineConfig) -> anyhow::Resul
                         MODEL_ROOT_PATH,
                         router_config.router_mode,
                         Some(router_config.kv_router_config),
+                        Arc::new(http_service.clone()),
                     )
                     .await?;
                 }
@@ -52,13 +52,15 @@ pub async fn run(runtime: Runtime, engine_config: EngineConfig) -> anyhow::Resul
                     // Static endpoints don't need discovery
                 }
             }
+            http_service
         }
         EngineConfig::StaticRemote(local_model) => {
             let card = local_model.card();
             let router_mode = local_model.router_config().router_mode;
 
-            let dst_config = DistributedConfig::from_settings(true);
+            let dst_config = DistributedConfig::from_settings(true); // true means static
             let distributed_runtime = DistributedRuntime::new(runtime.clone(), dst_config).await?;
+            let http_service = http_service_builder.build()?;
             let manager = http_service.model_manager();
 
             let endpoint_id = local_model.endpoint_id();
@@ -95,18 +97,36 @@ pub async fn run(runtime: Runtime, engine_config: EngineConfig) -> anyhow::Resul
             >(card, &client, router_mode, kv_chooser)
             .await?;
             manager.add_completions_model(local_model.display_name(), completions_engine)?;
+
+            for endpoint_type in EndpointType::all() {
+                http_service
+                    .enable_model_endpoint(endpoint_type, true)
+                    .await;
+            }
+
+            http_service
         }
         EngineConfig::StaticFull { engine, model, .. } => {
+            let http_service = http_service_builder.build()?;
             let engine = Arc::new(StreamingEngineAdapter::new(engine));
             let manager = http_service.model_manager();
             manager.add_completions_model(model.service_name(), engine.clone())?;
             manager.add_chat_completions_model(model.service_name(), engine)?;
+
+            // Enable all endpoints
+            for endpoint_type in EndpointType::all() {
+                http_service
+                    .enable_model_endpoint(endpoint_type, true)
+                    .await;
+            }
+            http_service
         }
         EngineConfig::StaticCore {
             engine: inner_engine,
             model,
             ..
         } => {
+            let http_service = http_service_builder.build()?;
             let manager = http_service.model_manager();
 
             let chat_pipeline = common::build_pipeline::<
@@ -122,8 +142,15 @@ pub async fn run(runtime: Runtime, engine_config: EngineConfig) -> anyhow::Resul
             >(model.card(), inner_engine)
             .await?;
             manager.add_completions_model(model.service_name(), cmpl_pipeline)?;
+            // Enable all endpoints
+            for endpoint_type in EndpointType::all() {
+                http_service
+                    .enable_model_endpoint(endpoint_type, true)
+                    .await;
+            }
+            http_service
         }
-    }
+    };
     tracing::debug!(
         "Supported routes: {:?}",
         http_service
@@ -146,13 +173,70 @@ async fn run_watcher(
     network_prefix: &str,
     router_mode: RouterMode,
     kv_router_config: Option<KvRouterConfig>,
+    http_service: Arc<HttpService>,
 ) -> anyhow::Result<()> {
-    let watch_obj = ModelWatcher::new(runtime, model_manager, router_mode, kv_router_config);
+    let mut watch_obj = ModelWatcher::new(runtime, model_manager, router_mode, kv_router_config);
     tracing::info!("Watching for remote model at {network_prefix}");
     let models_watcher = etcd_client.kv_get_and_watch_prefix(network_prefix).await?;
     let (_prefix, _watcher, receiver) = models_watcher.dissolve();
+
+    // Create a channel to receive model type updates
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+
+    watch_obj.set_notify_on_model_update(tx);
+
+    // Spawn a task to watch for model type changes and update HTTP service endpoints
+    let _endpoint_enabler_task = tokio::spawn(async move {
+        while let Some(model_type) = rx.recv().await {
+            tracing::debug!("Received model type update: {:?}", model_type);
+            update_http_endpoints(http_service.clone(), model_type).await;
+        }
+    });
+
+    // Pass the sender to the watcher
     let _watcher_task = tokio::spawn(async move {
         watch_obj.watch(receiver).await;
     });
+
     Ok(())
+}
+
+/// Updates HTTP service endpoints based on available model types
+async fn update_http_endpoints(service: Arc<HttpService>, model_type: ModelUpdate) {
+    tracing::debug!(
+        "Updating HTTP service endpoints for model type: {:?}",
+        model_type
+    );
+    match model_type {
+        ModelUpdate::Added(model_type) => match model_type {
+            ModelType::Backend => {
+                service
+                    .enable_model_endpoint(EndpointType::Chat, true)
+                    .await;
+                service
+                    .enable_model_endpoint(EndpointType::Completion, true)
+                    .await;
+            }
+            _ => {
+                service
+                    .enable_model_endpoint(model_type.as_endpoint_type(), true)
+                    .await;
+            }
+        },
+        ModelUpdate::Removed(model_type) => match model_type {
+            ModelType::Backend => {
+                service
+                    .enable_model_endpoint(EndpointType::Chat, false)
+                    .await;
+                service
+                    .enable_model_endpoint(EndpointType::Completion, false)
+                    .await;
+            }
+            _ => {
+                service
+                    .enable_model_endpoint(model_type.as_endpoint_type(), false)
+                    .await;
+            }
+        },
+    }
 }
