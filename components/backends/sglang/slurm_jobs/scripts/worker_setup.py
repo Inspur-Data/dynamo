@@ -178,6 +178,12 @@ def _parse_command_line_args(args: list[str] | None = None) -> argparse.Namespac
         default="h100",
         help="Type of GPU to use",
     )
+    parser.add_argument(
+        "--is_global_rank_zero",
+        action="store_true",
+        default=False,
+        help="Whether this is the global rank 0 node (for infrastructure setup)",
+    )
 
     return parser.parse_args(args)
 
@@ -261,19 +267,10 @@ def setup_head_prefill_node(prefill_host_ip: str) -> None:
 
     logging.info(f"Starting ingress server on node {prefill_host_ip}")
     ingress_process = run_command(
-        "dynamo run in=http out=dyn --http-port=8000", background=True
+        "python3 -m dynamo.frontend --http-port=8000", background=True
     )
     if not ingress_process:
         raise RuntimeError("Failed to start ingress")
-
-    logging.info(
-        f"Starting http server on port 9001 for flush_cache endpoint on node {prefill_host_ip}"
-    )
-    cache_flush_server_cmd = "python3 utils/sgl_http_server.py --ns dynamo"
-    cache_flush_server_process = run_command(cache_flush_server_cmd, background=True)
-    if not cache_flush_server_process:
-        raise RuntimeError("Failed to start cache flush server")
-
 
 def setup_prefill_node(
     rank: int,
@@ -282,12 +279,13 @@ def setup_prefill_node(
     total_gpus: int,
     use_sglang_commands: bool,
     gpu_type: str,
+    is_global_rank_zero: bool = False,
 ) -> int:
     """
     Setup the prefill node.
     """
     if not use_sglang_commands:
-        if rank == 0:
+        if is_global_rank_zero:  # Only global rank 0 sets up infrastructure
             setup_head_prefill_node(prefill_host_ip)
         else:
             logging.info(f"Setting up child prefill node: {rank}")
@@ -370,6 +368,7 @@ def main(input_args: list[str] | None = None):
             args.total_nodes * args.gpus_per_node,
             args.use_sglang_commands,
             args.gpu_type,
+            args.is_global_rank_zero,
         )
     else:
         setup_decode_node(

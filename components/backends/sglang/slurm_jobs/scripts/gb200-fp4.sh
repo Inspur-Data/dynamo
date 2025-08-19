@@ -109,7 +109,7 @@ if [ "$mode" = "prefill" ]; then
             --port 30000 \
             --max-prefill-tokens 32768 \
             --quantization modelopt_fp4 \
-            --enable-flashinfer-trtllm-moe \
+            --enable-flashinfer-cutlass-moe \
             --enable-ep-moe
     fi
 elif [ "$mode" = "decode" ]; then
@@ -149,7 +149,7 @@ elif [ "$mode" = "decode" ]; then
             --cuda-graph-bs 64 \
             --port 30000 \
             --quantization modelopt_fp4 \
-            --enable-flashinfer-trtllm-moe \
+            --enable-flashinfer-cutlass-moe \
             --enable-ep-moe
     fi
 fi

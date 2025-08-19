@@ -21,6 +21,7 @@ import argparse
 import logging
 import subprocess
 import tempfile
+import sys
 
 from jinja2 import Template
 
@@ -95,6 +96,12 @@ def _parse_command_line_args(args: list[str] | None = None) -> argparse.Namespac
         "--decode-nodes", type=int, default=2, help="Number of decode nodes"
     )
     parser.add_argument(
+        "--prefill-workers", type=int, default=1, help="Number of parallel prefill workers"
+    )
+    parser.add_argument(
+        "--decode-workers", type=int, default=1, help="Number of parallel decode workers" 
+    )
+    parser.add_argument(
         "--gpus-per-node", type=int, default=8, help="Number of GPUs per node"
     )
     parser.add_argument(
@@ -124,6 +131,15 @@ def main(input_args: list[str] | None = None):
     setup_logging()
     args = _parse_command_line_args(input_args)
 
+    # Validation
+    if args.prefill_nodes % args.prefill_workers != 0:
+        logging.error(f"Prefill nodes ({args.prefill_nodes}) must be divisible by prefill workers ({args.prefill_workers})")
+        sys.exit(1)
+    
+    if args.decode_nodes % args.decode_workers != 0:
+        logging.error(f"Decode nodes ({args.decode_nodes}) must be divisible by decode workers ({args.decode_workers})")
+        sys.exit(1)
+
     total_nodes = args.prefill_nodes + args.decode_nodes
     template_vars = {
         "job_name": args.job_name,
@@ -132,6 +148,8 @@ def main(input_args: list[str] | None = None):
         "time_limit": args.time_limit,
         "prefill_nodes": args.prefill_nodes,
         "decode_nodes": args.decode_nodes,
+        "prefill_workers": args.prefill_workers,
+        "decode_workers": args.decode_workers,
         "model_dir": args.model_dir,
         "config_dir": args.config_dir,
         "container_image": args.container_image,
