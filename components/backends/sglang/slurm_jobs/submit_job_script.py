@@ -131,23 +131,20 @@ def main(input_args: list[str] | None = None):
     setup_logging()
     args = _parse_command_line_args(input_args)
 
-    # Validation
-    if args.prefill_nodes % args.prefill_workers != 0:
-        logging.error(f"Prefill nodes ({args.prefill_nodes}) must be divisible by prefill workers ({args.prefill_workers})")
-        sys.exit(1)
-    
-    if args.decode_nodes % args.decode_workers != 0:
-        logging.error(f"Decode nodes ({args.decode_nodes}) must be divisible by decode workers ({args.decode_workers})")
-        sys.exit(1)
+    # Calculate total nodes correctly
+    total_prefill_nodes = args.prefill_nodes * args.prefill_workers
+    total_decode_nodes = args.decode_nodes * args.decode_workers
+    total_nodes = total_prefill_nodes + total_decode_nodes
 
-    total_nodes = args.prefill_nodes + args.decode_nodes
     template_vars = {
         "job_name": args.job_name,
         "total_nodes": total_nodes,
         "account": args.account,
         "time_limit": args.time_limit,
-        "prefill_nodes": args.prefill_nodes,
-        "decode_nodes": args.decode_nodes,
+        "prefill_nodes_per_worker": args.prefill_nodes,  # nodes per worker
+        "decode_nodes_per_worker": args.decode_nodes,     # nodes per worker
+        "total_prefill_nodes": total_prefill_nodes,       # total prefill nodes
+        "total_decode_nodes": total_decode_nodes,         # total decode nodes
         "prefill_workers": args.prefill_workers,
         "decode_workers": args.decode_workers,
         "model_dir": args.model_dir,

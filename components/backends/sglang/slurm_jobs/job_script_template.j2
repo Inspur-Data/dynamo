@@ -10,27 +10,17 @@
 #SBATCH --partition={{ partition }}
 
 # Constants
-PREFILL_NODES={{ prefill_nodes }}
-DECODE_NODES={{ decode_nodes }}
+PREFILL_NODES_PER_WORKER={{ prefill_nodes_per_worker }}
+DECODE_NODES_PER_WORKER={{ decode_nodes_per_worker }}
+TOTAL_PREFILL_NODES={{ total_prefill_nodes }}
+TOTAL_DECODE_NODES={{ total_decode_nodes }}
 PREFILL_WORKERS={{ prefill_workers }}
 DECODE_WORKERS={{ decode_workers }}
-TOTAL_NODES=$((PREFILL_NODES + DECODE_NODES))
+TOTAL_NODES=$((TOTAL_PREFILL_NODES + TOTAL_DECODE_NODES))
 GPUS_PER_NODE={{ gpus_per_node }}
 
-# Calculate nodes per worker - validation done in submit script
-PREFILL_NODES_PER_WORKER=$((PREFILL_NODES / PREFILL_WORKERS))
-DECODE_NODES_PER_WORKER=$((DECODE_NODES / DECODE_WORKERS))
-
-# Validation
-if [ $((PREFILL_NODES % PREFILL_WORKERS)) -ne 0 ]; then
-    echo "Error: PREFILL_NODES ($PREFILL_NODES) not divisible by PREFILL_WORKERS ($PREFILL_WORKERS)"
-    exit 1
-fi
-
-if [ $((DECODE_NODES % DECODE_WORKERS)) -ne 0 ]; then
-    echo "Error: DECODE_NODES ($DECODE_NODES) not divisible by DECODE_WORKERS ($DECODE_WORKERS)"
-    exit 1
-fi
+# Remove validation since no division needed
+# PREFILL_NODES_PER_WORKER and DECODE_NODES_PER_WORKER are direct inputs
 
 LOG_DIR="${SLURM_SUBMIT_DIR}/logs/${SLURM_JOB_ID}/"
 SCRIPT_DIR="${SLURM_SUBMIT_DIR}/scripts"
@@ -64,9 +54,9 @@ if [ -z "$PREFILL_HOST_IP" ]; then
 fi
 echo "Prefill host IP address: $PREFILL_HOST_IP"
 
-DECODE_HOST_IP=$(srun --nodes=1 --ntasks=1 --nodelist=${nodes[$PREFILL_NODES]} ip route get $(getent ahosts ${nodes[$PREFILL_NODES]} | grep STREAM | head -1 | awk '{print $1}') | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+DECODE_HOST_IP=$(srun --nodes=1 --ntasks=1 --nodelist=${nodes[$TOTAL_PREFILL_NODES]} ip route get $(getent ahosts ${nodes[$TOTAL_PREFILL_NODES]} | grep STREAM | head -1 | awk '{print $1}') | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
 if [ -z "$DECODE_HOST_IP" ]; then
-    echo "Error: Could not retrieve IP address for decode host ${nodes[$PREFILL_NODES]} on interface $NETWORK_INTERFACE"
+    echo "Error: Could not retrieve IP address for decode host ${nodes[$TOTAL_PREFILL_NODES]} on interface $NETWORK_INTERFACE"
     exit 1
 fi
 echo "Decode host IP address: $DECODE_HOST_IP"
@@ -120,7 +110,7 @@ done
 # Launch decode workers  
 decode_global_rank=0
 for worker_id in $(seq 0 $((DECODE_WORKERS - 1))); do
-    start_node=$((PREFILL_NODES + worker_id * DECODE_NODES_PER_WORKER))
+    start_node=$((TOTAL_PREFILL_NODES + worker_id * DECODE_NODES_PER_WORKER))
     end_node=$((start_node + DECODE_NODES_PER_WORKER - 1))
     
     echo "Launching decode worker ${worker_id} on nodes ${start_node}-${end_node}"
